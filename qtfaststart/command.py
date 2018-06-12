@@ -33,6 +33,9 @@ def run():
     parser.add_option("-s", "--sample", dest="sample", default=False,
                       action="store_true",
                       help="Create a small sample of the input file")
+    parser.add_option("-c", "--compress", dest="compress_header", default=False,
+                      action="store_true",
+                      help="Create a small sample of the input file")
 
     options, args = parser.parse_args()
 
@@ -73,7 +76,8 @@ def run():
         limit = 4 * (1024 ** 2)
 
     try:
-        processor.process(args[0], outfile, limit = limit, to_end = options.to_end)
+        processor.process(args[0], outfile, limit = limit, 
+            to_end = options.to_end, compress_header = options.compress_header, cleanup=False)
     except FastStartException:
         # A log message was printed, so exit with an error code
         raise SystemExit(1)

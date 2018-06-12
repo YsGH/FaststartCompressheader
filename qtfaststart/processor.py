@@ -19,6 +19,8 @@ from qtfaststart.exceptions import UnsupportedFormatError
 # in the event someone had used it from our namespace previously
 from qtfaststart.exceptions import FastStartException
 
+import zlib
+
 CHUNK_SIZE = 8192
 
 log = logging.getLogger("qtfaststart")
@@ -175,7 +177,7 @@ def _moov_is_compressed(datastream, moov_atom):
     return False
 
 def process(infilename, outfilename, limit=float('inf'), to_end=False, 
-        cleanup=True):
+        compress_header=False, cleanup=True):
     """
         Convert a Quicktime/MP4 file for streaming by moving the metadata to
         the front of the file. This method writes a new file.
@@ -253,7 +255,10 @@ def process(infilename, outfilename, limit=float('inf'), to_end=False,
             outfile.write(datastream.read(atom.size))
  
     if not to_end:
-        _write_moov(moov, outfile)
+        if compress_header:
+            _compress_header(moov, outfile, moov_atom)
+        else:
+            _write_moov(moov, outfile)
 
     # Write the rest
     skip_atom_types = ["ftyp", "moov"]
@@ -287,6 +292,8 @@ def _write_moov(moov, outfile):
     bytes = moov.getvalue()
     log.debug("Writing moov... (%d bytes)" % len(bytes))
     outfile.write(bytes)
+    outfile_test = open('moov.txt', "wb")
+    outfile_test.write(bytes)
 
 def _patch_moov(datastream, atom, offset):
     datastream.seek(atom.position)
@@ -319,6 +326,48 @@ def _patch_moov(datastream, atom, offset):
         moov.seek(entries_pos)
         moov.write(struct.pack(struct_fmt, *offset_entries))
     return moov
+
+def _compress_header(moov, outfile, moov_atom):
+    bytes = moov.getvalue()
+    start_pos = moov_atom.position
+    original_size = moov_atom.size
+    compress_data = zlib.compress(bytes, -1) 
+    print len(bytes)
+    print len(compress_data)
+
+    # cmov = Atom("cmov", start_pos, len(compress_data)+16)
+    dcom = Atom("dcom", start_pos-8, 12)
+    cmvd = Atom("cmvd", start_pos-20, len(compress_data)+8)
+
+    size_diff = original_size - (len(compress_data) + 40)
+
+    # outfile.write(str.encode("moov"))
+    # moov.seek(4)
+    # outfile.write(moov.getvalue())
+    _write_atom_type_size("moov", len(compress_data)+40, outfile)
+    outfile_test = open('cmov.txt', "wb")
+    _write_atom_type_size("moov", len(compress_data)+40, outfile_test)
+ 
+    # value = moov.getvalue()[8:]
+    # outfile.write(value)
+
+    _write_atom_type_size("cmov", len(compress_data)+32, outfile)
+    _write_atom_type_size("cmov", len(compress_data)+32, outfile_test)
+
+    _write_atom_type_size("dcom", 12, outfile)
+    outfile.write(str.encode("zlib"))
+    _write_atom_type_size("cmvd", len(compress_data)+12, outfile)
+    outfile.write(struct.pack(">L", original_size))
+    outfile.write(compress_data)
+    free = Atom("free", start_pos-20-len(compress_data)-8, size_diff)
+    _write_atom_type_size("free", size_diff, outfile)
+    for i in range((size_diff-8)/4):
+        outfile.write(struct.pack(">L", 0))
+
+
+def _write_atom_type_size(atom_name, atom_size, outfile):
+    outfile.write(struct.pack(">L", atom_size))
+    outfile.write(str.encode(atom_name))
 
 def get_chunks(stream, chunk_size, limit):
     remaining = limit
